@@ -1,0 +1,57 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+.idea/
+.vs/
+cmake-build-debug/
+build/
+build-*/
+build_*/
+
+# kbuild output from kernel-examples/linux
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+modules.order
+Module.symvers
+
+# local scratch
+*.log
+*.user
+
+# The recorded behaviour baseline must stay committable.
+!tests/data/*.bin
+!tests/data/*.txt
+
+docs/superpowers/

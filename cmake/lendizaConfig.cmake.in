@@ -1,0 +1,13 @@
+@PACKAGE_INIT@
+
+# Allow downstream to find the targets installed by this package
+include("${CMAKE_CURRENT_LIST_DIR}/lendizaTargets.cmake")
+
+# Expose installed include directory for consumers
+set(LENDIZA_INCLUDE_DIR "${PACKAGE_PREFIX_DIR}/include/lendiza")
+
+# Expose installed library directory for consumers
+set(LENDIZA_LIBRARY_DIR "${PACKAGE_PREFIX_DIR}/lib/lendiza")
+
+# The imported targets lendiza::lendiza and lendiza::lendiza_d come from
+# lendizaTargets.cmake, included above.
