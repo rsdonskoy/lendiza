@@ -63,6 +63,20 @@ void check32(uint8_t opc, size_t imm_bytes, size_t& failures)
     for (const bool addr16 : { false, true }) {
         for (const uint8_t modrm : mods) {
             const uint8_t sib = (modrm & 7u) == 4u ? 0x25 : 0x00;
+
+            if (lzmodel::requires_memory_operand(opc) && (modrm >> 6) == 3u) {
+                /* The CPU rejects this encoding whatever the registers hold, so
+                 * there is no length to report and no truncation case to test. */
+                const std::vector<uint8_t> invalid =
+                    assemble(addr16, opc, modrm, sib, imm_bytes, false);
+                if (decode32(invalid.data(), invalid.size()) != ERR_UNDEFINED) {
+                    ++failures;
+                    std::printf("    opc=%02X modrm=%02X must be undefined, got %zu\n", opc, modrm,
+                                decode32(invalid.data(), invalid.size()));
+                }
+                continue;
+            }
+
             const size_t expected = (addr16 ? 1u : 0u) + 1u +
                                     lzmodel::modrm_span(modrm, sib, false, addr16) + imm_bytes;
             std::vector<uint8_t> full = assemble(addr16, opc, modrm, sib, imm_bytes, false);
@@ -164,7 +178,8 @@ TEST(X86BasicTest, Address_size_switches_to_16_bit_ModRM_rules)
     EXPECT_EQ(x86({ 0x67, 0x8D, 0x06, 1, 2 }), 5u);       /* 16-bit: rm=110 IS a disp16 */
     EXPECT_EQ(x86({ 0x8D, 0x80, 1, 2, 3, 4 }), 6u);        /* 32-bit: [eax+disp32] */
     EXPECT_EQ(x86({ 0x67, 0x8D, 0x80, 1, 2 }), 5u);        /* 16-bit: [BX+disp16] */
-    EXPECT_EQ(x86({ 0x67, 0x8D, 0xC0 }), 3u);              /* register form is unchanged */
+    EXPECT_EQ(x86({ 0x8B, 0xC0 }), 2u);                             /* register form */
+    EXPECT_EQ(x86({ 0x67, 0x8B, 0xC0 }), 3u);              /* ... unchanged by 0x67 */
 }
 
 TEST(X86BasicTest, Moffs_and_string_operations)

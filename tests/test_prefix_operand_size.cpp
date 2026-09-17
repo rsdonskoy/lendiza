@@ -92,10 +92,14 @@ TEST(Prefix66Test, MOV_0xB8_REX_W_imm64)
     EXPECT_EQ(x64({ 0x48, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8 }), 10u); // MOV rax, imm64
 }
 
-TEST(Prefix66Test, MOV_0xB8_REX_W_Prefix66_rex_w_wins)
+TEST(Prefix66Test, MOV_0xB8_REX_W_wins_only_when_adjacent)
 {
+    /* 0x66 first: the REX is the last prefix, so it applies and wins over 0x66. */
     EXPECT_EQ(x64({ 0x66, 0x48, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8 }), 11u); // 2 prefix bytes + opcode + imm64
-    EXPECT_EQ(x64({ 0x48, 0x66, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8 }), 11u); // order irrelevant
+
+    /* REX first: the 0x66 that follows voids it, leaving the 16-bit form
+     * (2 prefix bytes + opcode + imm16). Measured by executing the encoding. */
+    EXPECT_EQ(x64({ 0x48, 0x66, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8 }), 5u);
 }
 
 TEST(Prefix66Test, MOV_0xBF_REX_W_imm64)
@@ -175,10 +179,31 @@ TEST(Prefix66Test, NoOperand_forms_only_grow_by_the_prefix)
     EXPECT_EQ(x64({ 0x66, 0xFF, 0xD0 }), 3u); // CALL ax (FF /2, mod=11)
 }
 
-TEST(Prefix66Test, Duplicate_66_is_undefined)
+TEST(Prefix66Test, Duplicate_66_counts_toward_length)
 {
-    EXPECT_EQ(x64({ 0x66, 0x66, 0x90 }), ERR_UNDEFINED);
-    EXPECT_EQ(x64({ 0x66, 0x66, 0xB8, 0x78, 0x56 }), ERR_UNDEFINED);
+    /* Two 0x66 bytes set the same operand-size slot once but occupy two bytes;
+     * this is the shape MSVC emits for 16-byte alignment padding. */
+    EXPECT_EQ(x64({ 0x66, 0x66, 0x90 }), 3u);
+    EXPECT_EQ(x64({ 0x66, 0x66, 0xB8, 0x78, 0x56 }), 5u);
+}
+
+TEST(Prefix66Test, Repeated_66_counts_until_the_instruction_limit)
+{
+    /* Boundary established by executing each encoding on real hardware, not by
+     * reading tables: the CPU folds every repeat into the one instruction and
+     * only the 15-byte limit stops it.  There is no per-prefix uniqueness rule
+     * to reinstate. */
+    static const uint8_t nop[] = { 0x0F, 0x1F, 0xC0 };
+
+    for (size_t n = 0; n <= 12; ++n) {
+        std::vector<uint8_t> v(n, 0x66);
+        v.insert(v.end(), nop, nop + sizeof nop);
+        EXPECT_EQ(lendiza::disasm_x64(v.data(), v.size()), n + 3);
+    }
+
+    std::vector<uint8_t> over(13, 0x66);
+    over.insert(over.end(), nop, nop + sizeof nop);
+    EXPECT_EQ(lendiza::disasm_x64(over.data(), over.size()), ERR_UNDEFINED);
 }
 
 TEST(Prefix66Test, Operand_size_plus_other_prefixes)
@@ -256,9 +281,9 @@ TEST(Prefix66Test32, Group_0xF7_Iz_imm16)
     EXPECT_EQ(x86({ 0x66, 0xF7, 0xC0, 0x78, 0x56 }), 5u);
 }
 
-TEST(Prefix66Test32, Duplicate_66_is_undefined)
+TEST(Prefix66Test32, Duplicate_66_counts_toward_length)
 {
-    EXPECT_EQ(x86({ 0x66, 0x66, 0x90 }), ERR_UNDEFINED);
+    EXPECT_EQ(x86({ 0x66, 0x66, 0x90 }), 3u);
 }
 
 TEST(Prefix66Test32, Rex_bytes_are_opcodes_in_ia32)

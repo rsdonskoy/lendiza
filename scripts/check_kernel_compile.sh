@@ -35,6 +35,27 @@ else
     echo "[SKIP] nm unavailable, cannot inspect undefined symbols"
 fi
 
+# The Linux kernel's headers define `auto` as `__auto_type`, a C-only GCC
+# extension, for kernel builds.  kernel-examples/linux/lendiza_kshim.cpp keeps
+# kernel headers out of its C++ TU, so the real module build never sees that
+# macro - but a driver that includes <linux/*.h> and lendiza_core.hpp in the same
+# .cpp would, and the resulting error would point into our headers rather than at
+# the caller.  Compiling with the macro in scope keeps that combination working
+# and is what enforces the "no `auto`" rule stated in include/lendiza_kernel.h.
+echo
+echo "== 1b. same compile with the kernel's auto redefinition in scope =="
+if "$CXX" -std=gnu++17 -Os -Wall -Wextra -Wno-unused-parameter \
+    -ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-asynchronous-unwind-tables \
+    -nostdinc++ -Dauto=__auto_type \
+    -I"$root/include" \
+    -c "$root/tests/kernel_compile_probe.cpp" -o "$out/probe_auto.o"; then
+    echo '[ OK ] nothing under include/ relies on the `auto` keyword'
+else
+    echo '[FAIL] a kernel-reachable header uses `auto`; name the type instead'
+    echo "       (see the rule at the top of include/lendiza_kernel.h)"
+    exit 1
+fi
+
 echo
 echo "== 2. guard-page over-read probe (native, needs no kernel headers) =="
 if [ "$(uname -s)" = "Linux" ]; then

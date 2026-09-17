@@ -147,8 +147,7 @@ namespace lendiza::detail
         ldz_u8 has_seg;     /* segment override */
         ldz_u8 has_lock;    /* F0 */
         ldz_u8 has_rep;     /* F2 / F3 */
-        ldz_u8 rex_present; /* long mode only */
-        ldz_u8 rex_byte;    /* long mode only */
+        ldz_u8 rex_byte;    /* long mode only; zero once a later prefix voids it */
 
         bool rex_w() const { return (rex_byte & 0x08u) != 0u; }
         bool rex_r() const { return (rex_byte & 0x04u) != 0u; }

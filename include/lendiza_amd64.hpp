@@ -394,44 +394,34 @@ private:
     {
         while (first < c.size() && first < LDZ_MAX_INSNS_LEN) {
             const ldz_u8 byte = c[first];
-            switch (k_prefix_table[byte]) {
+            const ldz_u8 kind = k_prefix_table[byte];
+            switch (kind) {
             case pfx_none:
             case pfx_opc_2byte:
                 return 0; /* 0x0F is an opcode escape, not a consumed prefix */
 
             case pfx_rex:
-                if (pf.rex_present != 0) {
-                    return LDZ_ERR_CODE(UNDEFINED_INSTRUCTION); /* only one REX */
-                }
-                pf.rex_present = 1;
-                pf.rex_byte = byte;
+                pf.rex_byte = byte; /* repeats are legal; the last one wins */
                 break;
 
+            /* Repeating a legacy prefix is not an error: the CPU keeps one slot
+             * per prefix type, so a later byte overwrites the earlier one and
+             * every byte still counts toward the instruction length.  Measured
+             * on hardware against the 15-byte cap in ldiza(), which is the only
+             * limit that actually applies. */
             case pfx_66:
-                if (pf.has_66 != 0) {
-                    return LDZ_ERR_CODE(UNDEFINED_INSTRUCTION);
-                }
                 pf.has_66 = 1;
                 break;
 
             case pfx_67:
-                if (pf.has_67 != 0) {
-                    return LDZ_ERR_CODE(UNDEFINED_INSTRUCTION);
-                }
                 pf.has_67 = 1;
                 break;
 
             case pfx_lock:
-                if (pf.has_lock != 0) {
-                    return LDZ_ERR_CODE(UNDEFINED_INSTRUCTION);
-                }
                 pf.has_lock = 1;
                 break;
 
             case pfx_rep:
-                if (pf.has_rep != 0) {
-                    return LDZ_ERR_CODE(UNDEFINED_INSTRUCTION);
-                }
                 pf.has_rep = 1;
                 break;
 
@@ -448,6 +438,13 @@ private:
                 return LDZ_ERR_CODE(UNKNOWN_ERROR);
             }
 
+            /* Only the REX sitting immediately before the opcode counts; any
+             * legacy prefix consumed after it voids that byte outright, its
+             * W/X/B/R bits included, since rex_w() and friends read rex_byte. */
+            if (kind != pfx_rex) {
+                pf.rex_byte = 0;
+            }
+
             ++pf.length;
             ++first;
         }
@@ -461,7 +458,7 @@ private:
     static ldz_size decode(const cursor& c, const prefix_info& pf, const ldz_size first)
     {
         const ldz_u8 opc = c[first];
-        switch (const auto mapped = kLengthTable_1byte_opc[opc]) {
+        switch (const ldz_u8 mapped = kLengthTable_1byte_opc[opc]) {
         case 0x00: /* ModRM, SIB and displacement follow the opcode */
             return modrm_len(c, first, 1, pf);
 
@@ -539,31 +536,45 @@ private:
     }
 
     /* Bytes occupied by the opcode bytes, the ModRM byte, an optional SIB byte
-     * and the displacement, counted from `first`. */
+     * and the displacement, counted from `first`.  pf is part of the callable
+     * contract group_len imposes on both traits; long mode no longer reads it,
+     * since nothing about the displacement depends on the prefixes. */
     static ldz_size modrm_len(const cursor& c, const ldz_size first, const ldz_size opc_size,
-                          const prefix_info& pf)
+                              [[maybe_unused]] const prefix_info& pf)
     {
         if (!c.has(first + opc_size + 1)) {
             return LDZ_ERR_CODE(INSUFFICIENT_BUFFER);
         }
 
         const ldz_u8 modrm = c[first + opc_size];
+
+        /* LEA cannot name a register: `8D C0` through `8D FF` are rejected by the
+         * CPU outright, whatever the registers hold (measured as
+         * EXCEPTION_ILLEGAL_INSTRUCTION over the whole band), so there is no
+         * length to report.  c[first] is the opcode whenever opc_size is 1 and
+         * 0x0F otherwise, so this never fires on the escape maps.  A single check
+         * rather than a table because 0x8D is the only 1-byte opcode in this
+         * class; revisit if the hardware sweep finds more. */
+        if (c[first] == 0x8D && (modrm & 0xC0u) == 0xC0u) {
+            return LDZ_ERR_CODE(UNDEFINED_INSTRUCTION);
+        }
+
         const ldz_size mapped = kLengthTable_ModRM[modrm];
         if (mapped != 0) {
             return opc_size + mapped - 1; /* the map counts one opcode byte */
         }
 
         /* mod=00 with r/m=100: a SIB byte follows, and it carries a disp32 only
-         * when base=101.  REX.B turns that base into a real register, and 0x67
-         * (32-bit addressing) removes that exception. */
+         * when base=101.  That holds whatever REX.B says: measured on hardware,
+         * `41 8D 04 25 <disp32>` consumes 8 bytes (REX.B selects r13 as the base
+         * at mod=01, but it never removes this displacement). */
         if (!c.has(first + opc_size + 2)) {
             return LDZ_ERR_CODE(INSUFFICIENT_BUFFER);
         }
 
         const ldz_u8 sib = c[first + opc_size + 1];
         const bool base_is_101 = test_bits123_for(sib, 0b101);
-        const bool rex_b_removes_disp = pf.rex_b() && pf.has_67 == 0;
-        const ldz_size disp = (base_is_101 && !rex_b_removes_disp) ? SIZE_4_BYTE_DISPLACEMENT : 0;
+        const ldz_size disp = base_is_101 ? SIZE_4_BYTE_DISPLACEMENT : 0;
 
         return opc_size + 2 + disp;
     }
@@ -576,7 +587,7 @@ private:
 
         const ldz_u8 second = c[first + 1];
 
-        switch (const auto mapped = kLengthTable_2byte_opc[second]) {
+        switch (const ldz_u8 mapped = kLengthTable_2byte_opc[second]) {
         case 0x00:
             return modrm_len(c, first, 2, pf);
 

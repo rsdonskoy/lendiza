@@ -52,11 +52,20 @@ inline size_t x86(std::initializer_list<int> list)
  * ------------------------------------------------------------------------- */
 namespace lzmodel {
 
+/* Opcodes whose ModRM must name a memory operand: the CPU rejects mod=11 for
+ * them whatever the registers hold, so no length may be reported.  Measured for
+ * 0x8D (LEA) as EXCEPTION_ILLEGAL_INSTRUCTION across the whole mod=11 band. */
+inline bool requires_memory_operand(uint8_t opc)
+{
+    return opc == 0x8D;
+}
+
 /* Bytes contributed by ModRM + optional SIB + displacement, counted *after* the
- * opcode (the ModRM byte itself counts 1).  `rex_b` only matters for 64-bit
- * addressing with mod=00 and SIB base=101; `addr16` selects 16-bit addressing
- * (0x67 in protected mode), where no SIB byte exists. */
-inline size_t modrm_span(uint8_t modrm, uint8_t sib, bool rex_b, bool addr16)
+ * opcode (the ModRM byte itself counts 1).  `rex_b` does not change any of it -
+ * it selects a base register, never removes a displacement - and is kept only
+ * because callers pass it; `addr16` selects 16-bit addressing (0x67 in
+ * protected mode), where no SIB byte exists. */
+inline size_t modrm_span(uint8_t modrm, uint8_t sib, [[maybe_unused]] bool rex_b, bool addr16)
 {
     const unsigned mod = modrm >> 6;
     const unsigned rm = modrm & 7u;
@@ -73,8 +82,10 @@ inline size_t modrm_span(uint8_t modrm, uint8_t sib, bool rex_b, bool addr16)
     }
 
     if (rm == 4u) {
-        const bool base5 = (sib & 7u) == 5u; /* no base -> disp32 follows */
-        const size_t disp = (mod == 0u && base5 && !rex_b) ? 4u
+        /* mod=00 with base=101 has no base register, so the disp32 is mandatory
+         * even under REX.B; measured against the CPU, which consumes it. */
+        const bool base5 = (sib & 7u) == 5u;
+        const size_t disp = (mod == 0u && base5) ? 4u
                               : (mod == 1u ? 1u : (mod == 2u ? 4u : 0u));
         return 2 + disp; /* ModRM + SIB + optional displacement */
     }

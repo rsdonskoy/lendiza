@@ -148,6 +148,7 @@ TEST(OracleTest, UnprefixedCompleteEncodingsAreUntouched)
 
     size_t checked = 0;
     size_t skipped_group = 0;
+    size_t skipped_not_executable = 0;
     size_t violations = 0;
 
     for (size_t i = 0; i < g_cases.size(); ++i) {
@@ -170,6 +171,13 @@ TEST(OracleTest, UnprefixedCompleteEncodingsAreUntouched)
             continue;
         }
 
+        if (c.bytes[0] == 0x8D && (c.bytes[1] & 0xC0u) == 0xC0u) {
+            /* LEA naming a register: not executable by the CPU at all, so the
+             * baseline's length here is exactly what changed on purpose. */
+            ++skipped_not_executable;
+            continue;
+        }
+
         ++checked;
         if (g_now64[i] != before) {
             ++violations;
@@ -178,8 +186,8 @@ TEST(OracleTest, UnprefixedCompleteEncodingsAreUntouched)
             }
         }
     }
-    std::printf("    unprefixed complete cases checked: %zu (skipped %zu group forms fixed on purpose)\n",
-                checked, skipped_group);
+    std::printf("    unprefixed complete cases checked: %zu (skipped %zu group forms and %zu not-executable forms fixed on purpose)\n",
+                checked, skipped_group, skipped_not_executable);
     EXPECT_TRUE(checked > 50000);
     EXPECT_EQ(violations, 0u);
 }

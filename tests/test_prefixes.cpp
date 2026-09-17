@@ -38,18 +38,42 @@ TEST(PrefixTest, REX_W_selects_imm64_for_B8_only)
     EXPECT_EQ(x64({ 0x48, 0xE8, 1, 2, 3, 4 }), 6u);              // CALL rel32
 }
 
-TEST(PrefixTest, REX_B_changes_the_SIB_base5_rule)
+TEST(PrefixTest, SIB_base5_keeps_its_disp32_under_REX_B)
 {
     EXPECT_EQ(x64({ 0x40, 0x8D, 0x04, 0x25, 1, 2, 3, 4 }), 8u); // REX + opcode + ModRM + SIB + disp32
-    EXPECT_EQ(x64({ 0x41, 0x8D, 0x04, 0x25 }), 4u);             // REX.B -> [r13], no disp
-    EXPECT_EQ(x64({ 0x4D, 0x8D, 0x04, 0x25 }), 4u);             // REX.WRXB
+    EXPECT_EQ(x64({ 0x41, 0x8D, 0x04, 0x25, 1, 2, 3, 4 }), 8u); /* REX.B: still disp32 */
+    EXPECT_EQ(x64({ 0x4D, 0x8D, 0x04, 0x25, 1, 2, 3, 4 }), 8u); /* REX.WRXB: same */
+
+    /* Control, measured on the same CPU: at mod=01 there is no "no base" case,
+     * and REX.B really does select r13 rather than rbp.  So only the
+     * displacement rule above holds; REX.B is not being ignored wholesale. */
+    EXPECT_EQ(x64({ 0x41, 0x8D, 0x44, 0x25, 0x7F }), 5u);
 }
 
-TEST(PrefixTest, Two_REX_bytes_are_undefined)
+TEST(PrefixTest, Repeated_REX_takes_the_last_one)
 {
-    EXPECT_EQ(x64({ 0x48, 0x48, 0x90 }), ERR_UNDEFINED);
-    EXPECT_EQ(x64({ 0x40, 0x4F, 0x90 }), ERR_UNDEFINED);
-    EXPECT_EQ(x64({ 0x4C, 0x41, 0xB8, 1, 2, 3, 4 }), ERR_UNDEFINED);
+    /* Hardware folds every REX byte into the same instruction; the one nearest
+     * the opcode is the effective one. */
+    EXPECT_EQ(x64({ 0x48, 0x48, 0x90 }), 3u);
+    EXPECT_EQ(x64({ 0x40, 0x4F, 0x90 }), 3u);
+    EXPECT_EQ(x64({ 0x4C, 0x41, 0xB8, 1, 2, 3, 4 }), 7u); /* REX.B, no W -> imm32 */
+}
+
+TEST(PrefixTest, Legacy_prefix_after_REX_voids_it)
+{
+    /* A REX only applies when it is the last prefix before the opcode.  These
+     * widths are what the CPU returns when the encodings are executed: the
+     * leading 0x48 is dropped, so the 0x66 form stays 16-bit and the immediate
+     * is not widened to 64 bits. */
+    EXPECT_EQ(x64({ 0x48, 0x66, 0xB8, 0xEF, 0xBE }), 5u);
+    EXPECT_EQ(x64({ 0x48, 0x66, 0x66, 0xB8, 0xEF, 0xBE }), 6u);
+    EXPECT_EQ(x64({ 0x48, 0x67, 0xB8, 1, 2, 3, 4 }), 7u);
+    EXPECT_EQ(x64({ 0x48, 0x64, 0xB8, 1, 2, 3, 4 }), 7u);
+    EXPECT_EQ(x64({ 0x66, 0x48, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8 }), 11u); /* REX last: wins */
+
+    /* Not just the W bit: with the REX.B void, SIB.base=101 keeps its disp32.
+     * A surviving REX.B would address [r13] and shrink this to 5. */
+    EXPECT_EQ(x64({ 0x41, 0x66, 0x8D, 0x04, 0x25, 1, 2, 3, 4 }), 9u);
 }
 
 TEST(PrefixTest, REX_after_the_opcode_is_not_a_prefix)
@@ -70,12 +94,14 @@ TEST(PrefixTest, Lock_and_rep_are_counted)
     EXPECT_EQ(x64({ 0xF3, 0x0F, 0x1E, 0xFA }), 4u); // ENDBR64
 }
 
-TEST(PrefixTest, Duplicate_lock_or_rep_is_undefined)
+TEST(PrefixTest, Duplicate_lock_or_rep_counts_toward_length)
 {
-    EXPECT_EQ(x64({ 0xF0, 0xF0, 0x90 }), ERR_UNDEFINED);
-    EXPECT_EQ(x64({ 0xF3, 0xF2, 0x90 }), ERR_UNDEFINED);
-    EXPECT_EQ(x64({ 0xF2, 0xF3, 0x90 }), ERR_UNDEFINED);
-    EXPECT_EQ(x64({ 0xF3, 0xF3, 0x90 }), ERR_UNDEFINED);
+    /* The CPU holds one slot per prefix type, so repeats overwrite rather than
+     * fault; every repeat byte still belongs to the instruction. */
+    EXPECT_EQ(x64({ 0xF0, 0xF0, 0x90 }), 3u);
+    EXPECT_EQ(x64({ 0xF3, 0xF2, 0x90 }), 3u);
+    EXPECT_EQ(x64({ 0xF2, 0xF3, 0x90 }), 3u);
+    EXPECT_EQ(x64({ 0xF3, 0xF3, 0x90 }), 3u);
 }
 
 TEST(PrefixTest, Segment_overrides_stack_and_all_count)
@@ -86,14 +112,20 @@ TEST(PrefixTest, Segment_overrides_stack_and_all_count)
     EXPECT_EQ(x64({ 0x64, 0x48, 0x8B, 0x00 }), 4u); // MOV rax, QWORD PTR FS:[rax]
 }
 
-TEST(PrefixTest, Prefix_ordering_does_not_matter)
+TEST(PrefixTest, Prefix_ordering_matters_only_for_REX)
 {
-    /* Seven prefixes + opcode + imm64 would need 16 bytes, which is longer than
-     * any legal instruction: rejected whichever order the prefixes come in. */
+    /* The same seven prefixes in two orders, which no longer agree: order only
+     * decides whether the REX still applies. */
+
+    /* REX last: it widens the immediate to 64 bits, so 7 + 1 + 8 = 16 bytes -
+     * longer than any legal instruction, rejected whichever order. */
     EXPECT_EQ(x64({ 0x64, 0x66, 0x67, 0xF0, 0xF2, 0x26, 0x48, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8 }),
               ERR_UNDEFINED);
-    EXPECT_EQ(x64({ 0x48, 0x26, 0xF2, 0xF0, 0x67, 0x66, 0x65, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8 }),
-              ERR_UNDEFINED);
+
+    /* REX first: the 0x66 that follows voids it, so the immediate is 16 bits and
+     * the whole thing fits in 7 + 1 + 2 = 10 bytes. Measured on hardware. */
+    EXPECT_EQ(x64({ 0x48, 0x26, 0xF2, 0xF0, 0x67, 0x66, 0x65, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8 }), 10u);
+
     /* Six of them plus an 8-byte immediate is exactly 15 bytes: still legal. */
     EXPECT_EQ(x64({ 0x66, 0x67, 0xF0, 0xF2, 0x26, 0x48, 0xB8, 1, 2, 3, 4, 5, 6, 7, 8 }), 15u);
 }
@@ -143,9 +175,9 @@ TEST(PrefixTest32, Bound_and_les_lds_are_opcodes_not_vex)
 TEST(PrefixTest32, Legacy_prefix_grouping_matches_long_mode)
 {
     EXPECT_EQ(x86({ 0x64, 0x67, 0x90 }), 3u);
-    EXPECT_EQ(x86({ 0xF0, 0xF0, 0x90 }), ERR_UNDEFINED);
-    EXPECT_EQ(x86({ 0x66, 0x66, 0x90 }), ERR_UNDEFINED);
-    EXPECT_EQ(x86({ 0x67, 0x67, 0x90 }), ERR_UNDEFINED);
+    EXPECT_EQ(x86({ 0xF0, 0xF0, 0x90 }), 3u);
+    EXPECT_EQ(x86({ 0x66, 0x66, 0x90 }), 3u);
+    EXPECT_EQ(x86({ 0x67, 0x67, 0x90 }), 3u);
     EXPECT_EQ(x86({ 0xF3, 0xA5 }), 2u);   // REP MOVSD
     EXPECT_EQ(x86({ 0xF3 }), ERR_INSUFFICIENT);
     EXPECT_EQ(x86({ 0x0F }), ERR_INSUFFICIENT);

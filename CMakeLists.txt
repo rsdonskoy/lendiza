@@ -201,3 +201,40 @@ if(LENDIZA_BUILD_TESTS)
         endforeach()
     endif()
 endif()
+
+# ---------------------------------------------------------------------------
+# lde64 comparison benchmark.
+#
+# Off by default: it links a prebuilt third-party archive and reads .text
+# corpora that both live outside this repository, so the two paths below are
+# the supported way to point at them.
+#
+# GNU toolchain only - bench/lde64_stub.s is GAS syntax. MSVC would need an
+# MASM equivalent of the same eight instructions.
+# ---------------------------------------------------------------------------
+option(LENDIZA_BUILD_BENCH "Build the lendiza vs lde64 length-decode benchmark" OFF)
+
+if(LENDIZA_BUILD_BENCH)
+    if(MSVC)
+        message(FATAL_ERROR "LENDIZA_BUILD_BENCH needs the GNU toolchain (bench/lde64_stub.s is GAS syntax)")
+    endif()
+    enable_language(ASM)
+
+    set(LENDIZA_LDE64_LIB "C:/devdrv/src/hypermon/third_party/lde64/LDE64x64.lib"
+        CACHE FILEPATH "Prebuilt lde64 static library")
+    set(LENDIZA_BENCH_FIXTURE_DIR "C:/devdrv/src/xendiza/bench/fixtures"
+        CACHE PATH "Directory containing the *.text.bin length-decode corpora")
+
+    if(NOT EXISTS "${LENDIZA_LDE64_LIB}")
+        message(FATAL_ERROR "LENDIZA_LDE64_LIB not found: ${LENDIZA_LDE64_LIB}")
+    endif()
+
+    add_executable(lendiza_bench bench/bench_lde.cpp bench/lde64_stub.s src/lendiza.cpp)
+    target_include_directories(lendiza_bench PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_compile_features(lendiza_bench PRIVATE cxx_std_20)
+    target_compile_definitions(lendiza_bench PRIVATE
+        LENDIZA_BENCH_FIXTURE_DIR="${LENDIZA_BENCH_FIXTURE_DIR}")
+    # The archive exports the C symbol LDE; no decoration on either toolchain's
+    # x64 ABI, so it links as-is under MinGW and MSVC alike.
+    target_link_libraries(lendiza_bench PRIVATE "${LENDIZA_LDE64_LIB}")
+endif()

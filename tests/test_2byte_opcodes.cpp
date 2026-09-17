@@ -299,5 +299,5 @@ TEST(TwoByteOpcodeTest, Prefixes_stack_onto_two_byte_families)
     EXPECT_EQ(x64({ 0x64, 0x0F, 0x10, 0x00 }), 4u); /* GS MOVUPS xmm, [rax] */
     EXPECT_EQ(x64({ 0x48, 0x0F, 0x10, 0x00 }), 4u); /* REX.W MOVUPS */
     EXPECT_EQ(x64({ 0x66, 0xF3, 0x0F, 0x10, 0x00 }), 5u);
-    EXPECT_EQ(x64({ 0xF3, 0xF2, 0x0F, 0x10, 0x00 }), ERR_UNDEFINED); /* two rep prefixes */
+    EXPECT_EQ(x64({ 0xF3, 0xF2, 0x0F, 0x10, 0x00 }), 5u); /* two rep prefixes, both count */
 }

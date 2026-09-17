@@ -51,11 +51,11 @@ TEST(Prefix67Test, Sib_base5_without_REX_B_keeps_disp32)
     EXPECT_EQ(x64({ 0x67, 0x8D, 0x04, 0x25, 1, 2, 3, 4 }), 8u);  // prefix + same
 }
 
-TEST(Prefix67Test, Sib_base5_with_REX_B_drops_disp_but_67_restores_it)
+TEST(Prefix67Test, Sib_base5_keeps_disp32_with_or_without_REX_B)
 {
-    /* REX.B turns SIB base=101 into r13, so no displacement is encoded.  Under
-     * 0x67 the addressing is 32-bit, where base=101 means "disp32 only" again. */
-    EXPECT_EQ(x64({ 0x49, 0x8D, 0x04, 0x25 }), 4u);
+    /* REX.B selects a base register; it never removes the displacement.  Measured
+     * on hardware, which consumes the disp32 here. */
+    EXPECT_EQ(x64({ 0x49, 0x8D, 0x04, 0x25, 1, 2, 3, 4 }), 8u);
     EXPECT_EQ(x64({ 0x67, 0x49, 0x8D, 0x04, 0x25, 1, 2, 3, 4 }), 9u);
 }
 
@@ -76,9 +76,9 @@ TEST(Prefix67Test, Immediates_and_relative_offsets_ignore_67)
     EXPECT_EQ(x64({ 0x67, 0x0F, 0xB6, 0x05, 1, 2, 3, 4 }), 8u); // MOVZX, disp32
 }
 
-TEST(Prefix67Test, Duplicate_67_is_undefined)
+TEST(Prefix67Test, Duplicate_67_counts_toward_length)
 {
-    EXPECT_EQ(x64({ 0x67, 0x67, 0x90 }), ERR_UNDEFINED);
+    EXPECT_EQ(x64({ 0x67, 0x67, 0x90 }), 3u);
 }
 
 TEST(Prefix67Test, Truncated_moffs_reports_insufficient)
@@ -130,7 +130,10 @@ TEST(Prefix67Test32, Mod01_keeps_disp8)
 
 TEST(Prefix67Test32, Reg_modrm_ignores_address_size)
 {
-    EXPECT_EQ(x86({ 0x67, 0x8D, 0xC0 }), 3u); // mod=11 has no displacement either way
+    /* mod=11 has no displacement in either address size.  MOV rather than LEA:
+     * the latter cannot name a register at all. */
+    EXPECT_EQ(x86({ 0x8B, 0xC0 }), 2u);
+    EXPECT_EQ(x86({ 0x67, 0x8B, 0xC0 }), 3u);
 }
 
 TEST(Prefix67Test32, Group_and_string_forms_follow_address_size)
@@ -147,9 +150,9 @@ TEST(Prefix67Test32, Operand_size_and_address_size_together)
     EXPECT_EQ(x86({ 0x66, 0x67, 0xA1, 1, 2 }), 5u);       // MOV ax, moffs16
 }
 
-TEST(Prefix67Test32, Duplicate_67_is_undefined)
+TEST(Prefix67Test32, Duplicate_67_counts_toward_length)
 {
-    EXPECT_EQ(x86({ 0x67, 0x67, 0x90 }), ERR_UNDEFINED);
+    EXPECT_EQ(x86({ 0x67, 0x67, 0x90 }), 3u);
 }
 
 TEST(Prefix67Test32, Truncated_disp16_reports_insufficient)

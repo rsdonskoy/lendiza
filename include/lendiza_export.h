@@ -26,7 +26,10 @@ extern "C" {
  * never read.
  *
  * VEX (0xC4/0xC5) and EVEX (0x62) encodings are not decoded and report
- * LENDIZA_ERR_UNDEFINED_INSTRUCTION.
+ * LENDIZA_ERR_UNDEFINED_INSTRUCTION.  So does an encoding whose ModRM names a
+ * register where the instruction requires memory (0x8D LEA with mod=11), which
+ * the CPU cannot execute at all; that judgement comes from the bytes, not from
+ * what the referenced registers happen to point at.
  */
 size_t lendiza_disasm_x86(const uint8_t *buffer, size_t length);
 

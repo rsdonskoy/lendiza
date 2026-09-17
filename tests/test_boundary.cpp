@@ -135,9 +135,10 @@ TEST(BoundaryTest, Rip_relative_needs_all_four_displacement_bytes)
     EXPECT_EQ(x64({ 0x48, 0x8B, 0x05, 1, 2, 3, 4 }), 7u); // REX counted, still one instruction
 }
 
-TEST(BoundaryTest, REXB_sib_base5_needs_nothing_more)
+TEST(BoundaryTest, REXB_sib_base5_still_needs_its_disp32)
 {
-    EXPECT_EQ(x64({ 0x49, 0x8D, 0x04, 0x25 }), 4u);
+    EXPECT_EQ(x64({ 0x49, 0x8D, 0x04, 0x25 }), ERR_INSUFFICIENT); /* disp32 cut short */
+    EXPECT_EQ(x64({ 0x49, 0x8D, 0x04, 0x25, 1, 2, 3, 4 }), 8u);
     EXPECT_EQ(x64({ 0x49, 0x8D, 0x04 }), ERR_INSUFFICIENT); // SIB byte itself is missing
 }
 
@@ -187,11 +188,18 @@ TEST(BoundaryTest, ThreeByteEscapes_do_not_read_past_their_table_byte)
 
 TEST(BoundaryTest, PrefixBytes_alone_are_not_an_instruction)
 {
-    static const uint8_t once_only[] = { 0x66, 0x67, 0xF0, 0xF2, 0xF3, 0x40, 0x48 };
-    for (const uint8_t p : once_only) {
+    static const uint8_t prefix_bytes[] = { 0x66, 0x67, 0xF0, 0xF2, 0xF3, 0x40, 0x48 };
+    for (const uint8_t p : prefix_bytes) {
         EXPECT_EQ(x64({ p }), ERR_INSUFFICIENT);
-        EXPECT_EQ(x64({ p, p, 0x90 }), ERR_UNDEFINED); /* repeating these is never legal */
     }
+
+    /* Repeating a legacy prefix overwrites the same slot in the CPU, and a
+     * repeated REX leaves the last one in effect; either way both bytes belong
+     * to the instruction. */
+    for (const uint8_t p : prefix_bytes) {
+        EXPECT_EQ(x64({ p, p, 0x90 }), 3u);
+    }
+
     /* Segment overrides may stack; the last one wins, and all of them count. */
     static const uint8_t segs[] = { 0x26, 0x2E, 0x36, 0x3E, 0x64, 0x65 };
     for (const uint8_t p : segs) {

@@ -39,13 +39,16 @@ inline void for_each(const Sink sink, void* const ctx)
 {
     static const uint8_t pfx32[4][2] = { { 0x00, 0x00 }, { 0x66, 0x00 },
                                          { 0x67, 0x00 }, { 0x66, 0x67 } };
-    static const uint8_t pfx64[5][2] = { { 0x00, 0x00 }, { 0x66, 0x00 }, { 0x48, 0x00 },
-                                         { 0x66, 0x48 }, { 0x67, 0x48 } };
+    /* The two 0x41 sets exist because the sweep previously never set REX.B, which
+     * is what let a wrong REX.B/SIB rule pass this oracle unnoticed. */
+    static const uint8_t pfx64[7][2] = { { 0x00, 0x00 }, { 0x66, 0x00 }, { 0x48, 0x00 },
+                                         { 0x66, 0x48 }, { 0x67, 0x48 },
+                                         { 0x41, 0x00 }, { 0x66, 0x41 } };
 
     for (unsigned mode = 32; mode <= 64; mode += 32) {
         const bool m64 = mode == 64;
         const uint8_t(*sets)[2] = m64 ? pfx64 : pfx32;
-        const size_t set_count = m64 ? 5 : 4;
+        const size_t set_count = m64 ? 7 : 4;
 
         for (size_t ps = 0; ps < set_count; ++ps) {
             uint8_t pfx[2];

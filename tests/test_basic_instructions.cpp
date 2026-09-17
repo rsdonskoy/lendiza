@@ -76,6 +76,21 @@ void check_modrm_family(uint8_t opc, size_t imm_bytes, Decode decode, size_t& ch
         for (const bool rex_b : { false, true }) {
             const uint8_t sib = (modrm & 7u) == 4u ? 0x25 : 0x00; /* base=101 */
             const size_t prefix = rex_b ? 1u : 0u;
+
+            if (lzmodel::requires_memory_operand(opc) && (modrm >> 6) == 3u) {
+                /* Complete encoding of an instruction the CPU cannot execute at
+                 * all, so the answer is the error, not a length.  The truncation
+                 * check below is about a missing operand byte and does not apply. */
+                std::vector<uint8_t> invalid = build(rex_b, false, opc, modrm, sib, imm_bytes, false);
+                ++checks;
+                if (decode(invalid.data(), invalid.size()) != ERR_UNDEFINED) {
+                    ++failures;
+                    std::printf("    opc=%02X modrm=%02X must be undefined, got %zu\n", opc, modrm,
+                                decode(invalid.data(), invalid.size()));
+                }
+                continue;
+            }
+
             const size_t expected =
                 prefix + 1 + lzmodel::modrm_span(modrm, sib, rex_b, false) + imm_bytes;
 
@@ -141,6 +156,27 @@ TEST(DisasmTest, Mov_0x88_to_0x8B_and_lea_0x8D)
         check_modrm_family(opc, 0, &decode64, checks, failures);
     }
     EXPECT_EQ(failures, 0u);
+}
+
+TEST(DisasmTest, Lea_0x8D_rejects_a_register_operand)
+{
+    /* The CPU raises EXCEPTION_ILLEGAL_INSTRUCTION for the whole mod=11 band of
+     * 8D regardless of what any register holds, so there is no length here. */
+    EXPECT_EQ(x64({ 0x8D, 0xC0 }), ERR_UNDEFINED);
+    EXPECT_EQ(x64({ 0x8D, 0xC5 }), ERR_UNDEFINED);
+    EXPECT_EQ(x64({ 0x8D, 0xFF }), ERR_UNDEFINED);
+    EXPECT_EQ(x64({ 0x48, 0x8D, 0xC0 }), ERR_UNDEFINED);
+    EXPECT_EQ(x64({ 0x67, 0x8D, 0xFF }), ERR_UNDEFINED);
+    EXPECT_EQ(x86({ 0x8D, 0xC0 }), ERR_UNDEFINED);
+    EXPECT_EQ(x86({ 0x67, 0x8D, 0xC0 }), ERR_UNDEFINED);
+
+    /* Where the rule stops: a memory operand is fine, and MOV has no such
+     * requirement. */
+    EXPECT_EQ(x64({ 0x8D, 0x00 }), 2u);                              // LEA eax, [eax]
+    EXPECT_EQ(x64({ 0x8D, 0x04, 0x25, 0, 0, 0, 0 }), 7u);            // LEA eax, [disp32]
+    EXPECT_EQ(x64({ 0x8D, 0x44, 0x25, 0x10 }), 4u);                  // LEA eax, [..+disp8]
+    EXPECT_EQ(x64({ 0x8B, 0xC0 }), 2u);                              // MOV eax, eax
+    EXPECT_EQ(x86({ 0x8D, 0x00 }), 2u);
 }
 
 TEST(DisasmTest, Segment_moves_0x8C_0x8E)

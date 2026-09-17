@@ -33,6 +33,9 @@ enum Category {
                         * baseline only knew "invalid" */
     cat_ia32_row_a,    /* IA-32 two-byte map row A (SHLD/SHRD imm8, PUSH/POP GS,
                         * RSM, BTS, IMUL): every cell there said "six bytes" */
+    cat_reg_operand_invalid, /* the baseline gave a length to an encoding whose
+                              * ModRM names a register where the instruction
+                              * requires memory, which the CPU cannot execute */
     cat_unexpected,
     cat_count          /* number of categories; the bound for Result::counts */
 };
@@ -46,6 +49,7 @@ inline const char* category_name(Category c)
     case cat_group_disp: return "group-disp";
     case cat_error_refined: return "error-refined";
     case cat_ia32_row_a: return "ia32-row-a";
+    case cat_reg_operand_invalid: return "reg-operand-invalid";
     case cat_unexpected: return "UNEXPECTED";
     default: return "same";
     }
@@ -102,6 +106,10 @@ inline Category classify(const lzc::Case& c, uint8_t before, uint8_t after, bool
         default:
             break;
         }
+    }
+    if (c.bytes[0] == 0x8D && c.len >= 2 && (c.bytes[1] & 0xC0u) == 0xC0u &&
+        after == 0xE1) {
+        return cat_reg_operand_invalid; /* LEA naming a register: not executable */
     }
     if (before >= 0xE0) {
         /* Reviewed: within the 0F escape family the baseline either demanded a

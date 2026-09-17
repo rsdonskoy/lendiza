@@ -88,7 +88,9 @@ Working examples: [`kernel-examples/`](kernel-examples/README.md), including
 `scripts/check_kernel_compile.cmd` (`cl /kernel` plus a `dumpbin` check that the
 object references no CRT/RTTI/exception symbol) and
 `scripts/check_kernel_compile.sh` (`g++ -ffreestanding -nostdinc++`, `nm -u`
-check, and a real `make -C /lib/modules/.../build` when headers are present).
+check, a recompile with `-Dauto=__auto_type` to enforce the no-`auto` rule from
+`lendiza_kernel.h`, and a real `make -C /lib/modules/.../build` when headers are
+present).
 
 ### Prefix semantics (important, and a change from pre-0.2 behaviour)
 A prefix byte belongs to the instruction it precedes, so it is counted into the
@@ -98,9 +100,20 @@ widens only `MOV r,imm`, and `0x67` changes address size — moffs width in both
 modes, plus the whole ModRM encoding (no SIB, disp16) in IA-32.
 
 Consequences worth knowing:
-- `0x66`, `0x67`, `0xF0`, one of `0xF2/0xF3` and REX may each appear once; a
-  repeat returns `0xE1`. Segment overrides may stack (the last wins).
+- `0x66`, `0x67`, `0xF0` and `0xF2`/`0xF3` may repeat freely: the CPU keeps one
+  slot per prefix type, so a repeat only overwrites it while both bytes stay part
+  of the instruction. `66 66 0F 1F 84 00 disp32` — the 10-byte NOP MSVC uses for
+  16-byte function alignment — decodes as 10 bytes. Repeated REX bytes are
+  likewise accepted, the last taking effect, and a legacy prefix after a REX
+  voids that REX entirely (including its W/X/B/R bits), because only a REX
+  adjacent to the opcode applies. Segment overrides stack (the last wins).
 - `0x9B` (FWAIT) is decoded as its own 1-byte instruction, not as a prefix.
+- An encoding whose ModRM names a register where the instruction requires a
+  memory operand returns `0xE1`: the CPU cannot execute it at all, so there is no
+  length to report. Measured on hardware for `0x8D` (LEA), whose whole `mod=11`
+  band raises `EXCEPTION_ILLEGAL_INSTRUCTION` whatever the registers hold. This is
+  decided from the bytes alone — an instruction that merely faults because of the
+  *values* in its base registers (`8B 00` with a bad `rax`) still gets its length.
 - VEX (`0xC4/0xC5`) and EVEX (`0x62`) encodings are **not** decoded in long mode
   and return `0xE1`; a linear scan over AVX code stops there. (In IA-32 those
   bytes are ordinary opcodes: `LES/LDS/BOUND`.)
@@ -116,3 +129,57 @@ Consequences worth knowing:
 `tests/README.md` documents the suites, the fixed decoder bugs this refactor
 caught, the remaining known gaps (notably the IA-32 `0F A8-AF` table row), and
 how to re-record the behaviour baseline in `tests/data/`.
+
+### Benchmark
+`bench/bench_lde.cpp` sweeps real `.text` twice — once per decoder — and reports
+elapsed time, throughput and successfully decoded instruction counts for the
+same buffer. lde64 is chosen as the comparator because it is the only reference
+available that is measured in the same units: it too returns nothing but an
+instruction length. Timing lendiza against Zydis or Capstone would compare a
+length lookup against a full decode and say nothing useful.
+
+```bash
+cmake -S . -B build-bench -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DLENDIZA_BUILD_TESTS=OFF -DLENDIZA_BUILD_BENCH=ON
+cmake --build build-bench --target lendiza_bench
+./build-bench/lendiza_bench.exe                            # ntdll + kernelbase + kernel32
+./build-bench/lendiza_bench.exe --fixture ntdll --iters 80 # one corpus, more passes
+./build-bench/lendiza_bench.exe --file some_dump.text.bin
+```
+
+The corpora are `.text` sections of Windows system DLLs; `LENDIZA_BENCH_FIXTURE_DIR`
+points at the directory holding them and `LENDIZA_LDE64_LIB` at the lde64
+archive. Both default to local checkouts, and the benchmark is off unless asked
+for, since neither file is part of this repository.
+
+3,751,936 bytes of `.text`, 40 passes, g++ 15.2 (MinGW-w64) Ninja Release:
+
+| decoder | MiB/s | Minsn/s | decoded | errors | avg step |
+|---|---:|---:|---:|---:|---:|
+| lendiza | 209–262 | 62–78 | 42,558,520 | 17,480 | 3.62 B |
+| lde64 | 77–96 | 23–29 | 42,556,960 | 21,720 | 3.53 B |
+
+About 2.7x, holding between 2.6x and 2.9x across the individual fixtures. The
+timing columns drift up to ~11% run to run; `decoded`, `errors` and `avg step`
+are deterministic and identical across repeats. Two readings matter here:
+
+- The decoders visit the same instruction boundaries — their counts differ by
+  0.002% — so the ratio is per-decode cost rather than one walker stepping more
+  times because it advances shorter.
+- The `lendiza (C ABI)` row repeats the sweep through `lendiza_disasm_x64`
+  because a header-only decoder called inline would otherwise be compared
+  against a library call. It tracks the inlined row, so inlining is not the
+  source of the gap.
+
+Two lde64 traps, both handled by `bench/lde64_stub.s` but worth knowing before
+calling it anywhere else:
+
+- Its second argument is an **architecture selector** (`0` = IA-32, `64` =
+  EM64T), not a buffer size. Passing anything except 64 silently decodes 64-bit
+  code as IA-32, where every REX byte is a legitimate one-byte `inc`/`dec` and
+  the result looks merely fast rather than wrong. It receives no bound at all, so
+  the benchmark appends slack bytes after the corpus.
+- Its `0x67` handler writes `ebx` without the prologue saving it, which violates
+  the x64 callee-saved contract and surfaces as a crash long after the call, in
+  whichever caller happened to keep a value in that register. The stub saves and
+  restores it.

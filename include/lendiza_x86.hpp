@@ -381,28 +381,20 @@ private:
             case pfx_none:
             case pfx_opc_2byte:
                 return 0;
+            /* Repeating a legacy prefix is not an error: the CPU keeps one slot
+             * per prefix type, so a later byte overwrites the earlier one and
+             * every byte still counts toward the instruction length.  The 15-byte
+             * cap in ldiza() is the only limit that actually applies. */
             case pfx_66:
-                if (pf.has_66 != 0) {
-                    return LDZ_ERR_CODE(UNDEFINED_INSTRUCTION);
-                }
                 pf.has_66 = 1;
                 break;
             case pfx_67:
-                if (pf.has_67 != 0) {
-                    return LDZ_ERR_CODE(UNDEFINED_INSTRUCTION);
-                }
                 pf.has_67 = 1;
                 break;
             case pfx_lock:
-                if (pf.has_lock != 0) {
-                    return LDZ_ERR_CODE(UNDEFINED_INSTRUCTION);
-                }
                 pf.has_lock = 1;
                 break;
             case pfx_rep:
-                if (pf.has_rep != 0) {
-                    return LDZ_ERR_CODE(UNDEFINED_INSTRUCTION);
-                }
                 pf.has_rep = 1;
                 break;
             case pfx_seg:
@@ -502,6 +494,13 @@ private:
         }
 
         const ldz_u8 modrm = c[first + opc_size];
+
+        /* LEA cannot name a register in any mode; see the long-mode twin of this
+         * check, which carries the hardware measurement. */
+        if (c[first] == 0x8D && (modrm & 0xC0u) == 0xC0u) {
+            return LDZ_ERR_CODE(UNDEFINED_INSTRUCTION);
+        }
+
         /* 0x67 switches to 16-bit addressing: no SIB byte, and mod=10 carries a
          * disp16 instead of a disp32. */
         const ldz_size mapped = (pf.has_67 != 0 ? kLengthTable_ModRM16 : kLengthTable_ModRM)[modrm];

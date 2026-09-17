@@ -64,6 +64,12 @@ if errorlevel 1 (
 
 echo.
 echo === headered probe: does the library core alone compile in kernel mode? ===
+rem NOTE: no counterpart here to the shell script's -Dauto=__auto_type step.  That
+rem macro is what the Linux kernel headers define for their own builds; the Windows
+rem kernel headers do not, and MSVC has no __auto_type at all, so defining it here
+rem would reject valid code unconditionally and model a hazard that does not exist
+rem on this platform.  The shared headers stay `auto`-free because the Linux check
+rem enforces it for both paths.
 cl /nologo /kernel /std:c++17 /GR- /EHs-c- /W4 /D_AMD64_=1 /DWIN32=0x100 /D_WIN32_WINNT=0x0A00 /DNDEBUG ^
    %INC% /Fo"%OUT%\\" /c "%ROOT%\tests\kernel_compile_probe.cpp"
 if errorlevel 1 (

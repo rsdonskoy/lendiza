@@ -25,12 +25,13 @@ the 15-byte instruction limit.
 ### `test_prefix_operand_size.cpp` — `Prefix66Test`, `Prefix66Test32`
 0x66 (operand size): every `Iz` family shrinks (`05/0D/...`, `81`, `69`, `A9`,
 `68`, `F7`, `C7`), `rel32` → `rel16` (`E8/E9`, `0F 80-8F`), `MOV r,imm`
-(`B8-BF`) with `REX.W` winning over `66`, the IA-32 far `9A/EA` forms, and the
-things 0x66 must *not* resize (imm8, displacements, SIB, moffs).
+(`B8-BF`) with `REX.W` applying only when it is the last prefix before the
+opcode (an `0x66` that follows it wins instead), the IA-32 far `9A/EA` forms, and
+the things 0x66 must *not* resize (imm8, displacements, SIB, moffs).
 
 ### `test_prefix_address_size.cpp` — `Prefix67Test`, `Prefix67Test32`
-0x67 (address size): moffs 8→4 in long mode and 4→2 in IA-32; the REX.B
-exception on SIB base=101 disappearing under 0x67; RIP-relative staying disp32;
+0x67 (address size): moffs 8→4 in long mode and 4→2 in IA-32; SIB base=101
+keeping its disp32 with or without `REX.B`; RIP-relative staying disp32;
 and in IA-32 the switch to 16-bit addressing (no SIB byte at all, `rm=110`
 becoming a disp16, `mod=10` becoming disp16).
 
@@ -73,13 +74,15 @@ old decoder dropped.
 The kernel-safety invariant stated over the whole opcode space:
 **for every input and every buffer length `n`, the result is either `<= n` or an
 error code** — plus the named boundaries (ModRM implying a SIB, RIP-relative
-disp32, `REX.B` + SIB base=101 under 0x67, imm16/32/64, group immediates,
+disp32, `REX.B` + SIB base=101 still needing its disp32, imm16/32/64, group immediates,
 three-byte escapes) and prefix-only / 15-byte-limit cases.
 
 ### `test_oracle_regression.cpp` — `OracleTest`
 Replays `tests/data/oracle_before.bin` (718,297 cases per mode, recorded from the
 pre-kernel-port decoder over `tests/lendiza_corpus.h`) and fails on any difference
-outside the six reviewed categories. Also checks that unprefixed, complete
+outside the seven reviewed categories (the newest, `reg-operand-invalid`, covers
+encodings the CPU cannot execute because the ModRM names a register where the
+instruction requires memory - `8D C0`..`8D FF`). Also checks that unprefixed, complete
 encodings are bit-identical (90,941 cases), that a linear walk over real code
 covers at least as much as before with fewer steps, and that widening the buffer
 never changes a complete answer (52,459 comparisons).
@@ -88,8 +91,10 @@ never changes a complete answer (52,459 comparisons).
 The main gate of the table refactor. It replays the exhaustive sweep of the
 `0xEE`/`0xEF` dispatch space in `lendiza_group_sweep.h` — every group table
 (`C6/C7/F6/F7/FE/FF`, `0F 00/01/18/71/72/73/AE/B9/BA/C7`) and every x87 row,
-9 prefix sets (4 IA-32 + 5 long-mode) × 24 group/x87 cells × 256 ModRM bytes ×
-4 SIB/filler shapes × 7 buffer windows = 1,548,288 cases — against
+11 prefix sets (4 IA-32 + 7 long-mode; the last two long-mode sets carry REX.B,
+which the sweep previously never set and which is what let a wrong REX.B/SIB rule
+pass this oracle unnoticed) × 24 group/x87 cells × 256 ModRM bytes ×
+4 SIB/filler shapes × 7 buffer windows = 1,892,352 cases — against
 `tests/data/group_before.bin` and fails on **any** difference: unlike
 `OracleTest` there is no exemption category, because the refactor is
 behaviour-preserving by contract. The baseline is recorded from the
@@ -242,7 +247,7 @@ prefix tests:
 
 - `MOV_0xB8_REX_W_imm64` - `48 B8 imm64` is 10 bytes
 - `Prefix66Test.MOV_0xB8_Prefix66_imm16` - `66 B8 imm16` is 4 bytes
-- `Prefix67Test.Sib_base5_with_REX_B_drops_disp_but_67_restores_it`
+- `Prefix67Test.Sib_base5_keeps_disp32_with_or_without_REX_B`
 - `BoundaryTest.Immediates_need_every_byte`
 
 ## Coverage Analysis

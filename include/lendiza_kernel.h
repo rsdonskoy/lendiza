@@ -12,10 +12,18 @@
  *
  * Two rules the core follows because of what kernel headers do to C++:
  *   - no `auto`: <linux/compiler_types.h> defines `auto` as `__auto_type`, which
- *     breaks trailing return types and deduced locals.
+ *     breaks trailing return types and deduced locals.  Enforced by step 1b of
+ *     scripts/check_kernel_compile.sh, which compiles the probe with
+ *     -Dauto=__auto_type; that macro models a TU that includes kernel headers
+ *     and lendiza_core.hpp together, which kernel-examples/linux/lendiza_kshim.cpp
+ *     deliberately avoids by keeping kernel headers out of its C++ TU.
  *   - no `inline` on namespace-scope variables: the same header expands `inline`
  *     to `inline __gnu_inline`, and that attribute is invalid on objects.
  *     (A namespace-scope `constexpr` array already has internal linkage.)
+ *     Not machine-checked, and it cannot be simulated the way the `auto` rule
+ *     can: building with -Dinline='inline __gnu_inline' errors on ordinary
+ *     inline functions ("'__gnu_inline' does not name a type"), because
+ *     __gnu_inline is not a declaration specifier in C++ mode either.
  */
 #ifndef LENDIZA_KERNEL_H
 #define LENDIZA_KERNEL_H
