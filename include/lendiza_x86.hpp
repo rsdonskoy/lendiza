@@ -277,6 +277,44 @@ struct x86traits {
         }
 
         const cursor c { p, n };
+        const ldz_u8 kind0 = k_prefix_table[c[0]];
+
+        /* Fast path for the two shapes real code is made of: no prefix at all,
+         * or exactly one legacy prefix before the opcode.  The single-prefix
+         * state below replicates process_prefix after one consumed byte: the
+         * prefix sets its flag and counts one byte toward the length.  Stacked
+         * prefixes and a lone trailing prefix fall into ldiza_slow, which is
+         * the original process_prefix pipeline unchanged.  (No VEX/EVEX case:
+         * 0x40-0x4F are INC/DEC and 0x62/0xC4/0xC5 are BOUND/LES/LDS here, so
+         * every non-prefix byte already maps to pfx_none/pfx_opc_2byte.) */
+        if (kind0 == pfx_none || kind0 == pfx_opc_2byte) {
+            return decode_and_finish(c, prefix_info {}, 0);
+        }
+        if (!c.has(2)) {
+            return LDZ_ERR_CODE(INSUFFICIENT_BUFFER); /* buffer ends inside the prefix */
+        }
+        const ldz_u8 kind1 = k_prefix_table[c[1]];
+        if (kind1 != pfx_none && kind1 != pfx_opc_2byte) {
+            return ldiza_slow(c);
+        }
+
+        prefix_info pf {};
+        pf.length = 1;
+        switch (kind0) {
+        case pfx_66:   pf.has_66 = 1; break;
+        case pfx_67:   pf.has_67 = 1; break;
+        case pfx_lock: pf.has_lock = 1; break;
+        case pfx_rep:  pf.has_rep = 1; break;
+        default:       pf.has_seg = 1; break;
+        }
+        return decode_and_finish(c, pf, 1);
+    }
+
+private:
+    /* Original prefix pipeline, kept as the single source of stacked-prefix
+     * semantics and materialized out of line so the fast path stays a leaf. */
+    LDZ_NOINLINE static ldz_size ldiza_slow(const cursor& c)
+    {
         prefix_info pf {};
         ldz_size first = 0;
 
@@ -284,7 +322,13 @@ struct x86traits {
         if (prefix_err != 0) {
             return prefix_err;
         }
+        return decode_and_finish(c, pf, first);
+    }
 
+    /* Decode core plus the trailing checks every successful path shares. */
+    LDZ_FORCEINLINE static ldz_size decode_and_finish(const cursor& c, const prefix_info& pf,
+                                                      const ldz_size first)
+    {
         const ldz_size body = decode(c, pf, first);
         if (is_error(body)) {
             return body;

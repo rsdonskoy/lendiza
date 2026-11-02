@@ -283,6 +283,48 @@ struct amd64traits {
         }
 
         const cursor c { p, n };
+        const ldz_u8 kind0 = k_prefix_table[c[0]];
+
+        /* Fast path for the two shapes real code is made of: no prefix at all,
+         * or exactly one legacy/REX prefix before the opcode.  The single-prefix
+         * state below replicates process_prefix after one consumed byte: a REX
+         * records rex_byte, a legacy prefix sets its flag and leaves rex_byte
+         * zero, and every prefix counts one byte toward the length.  Everything
+         * else - stacked prefixes, VEX/EVEX, a lone trailing prefix - falls into
+         * ldiza_slow, which is the original process_prefix pipeline unchanged. */
+        if (kind0 == pfx_none || kind0 == pfx_opc_2byte) {
+            return decode_and_finish(c, prefix_info {}, 0);
+        }
+        if (kind0 == pfx_vex2 || kind0 == pfx_vex3 || kind0 == pfx_evex) {
+            /* process_prefix rejects these before looking at the buffer size. */
+            return LDZ_ERR_CODE(UNDEFINED_INSTRUCTION);
+        }
+        if (!c.has(2)) {
+            return LDZ_ERR_CODE(INSUFFICIENT_BUFFER); /* buffer ends inside the prefix */
+        }
+        const ldz_u8 kind1 = k_prefix_table[c[1]];
+        if (kind1 != pfx_none && kind1 != pfx_opc_2byte) {
+            return ldiza_slow(c); /* stacked prefixes, or VEX/EVEX after a legacy one */
+        }
+
+        prefix_info pf {};
+        pf.length = 1;
+        switch (kind0) {
+        case pfx_rex:  pf.rex_byte = c[0]; break;
+        case pfx_66:   pf.has_66 = 1; break;
+        case pfx_67:   pf.has_67 = 1; break;
+        case pfx_lock: pf.has_lock = 1; break;
+        case pfx_rep:  pf.has_rep = 1; break;
+        default:       pf.has_seg = 1; break;
+        }
+        return decode_and_finish(c, pf, 1);
+    }
+
+private:
+    /* Original prefix pipeline, kept as the single source of stacked-prefix
+     * semantics and materialized out of line so the fast path stays a leaf. */
+    LDZ_NOINLINE static ldz_size ldiza_slow(const cursor& c)
+    {
         prefix_info pf {};
         ldz_size first = 0;
 
@@ -290,7 +332,13 @@ struct amd64traits {
         if (prefix_err != 0) {
             return prefix_err;
         }
+        return decode_and_finish(c, pf, first);
+    }
 
+    /* Decode core plus the trailing checks every successful path shares. */
+    LDZ_FORCEINLINE static ldz_size decode_and_finish(const cursor& c, const prefix_info& pf,
+                                                      const ldz_size first)
+    {
         const ldz_size body = decode(c, pf, first);
         if (is_error(body)) {
             return body;

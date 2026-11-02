@@ -22,6 +22,21 @@ enum class ErrorCode {
 
 #define LDZ_ERR_CODE(x) (static_cast<ldz_size>(lendiza::ErrorCode::x))
 
+/* Inlining control for the decode hot path: the fast path wants the decode
+ * core inlined into a leaf, while the prefix slow path stays in its own
+ * function so it does not pollute the hot code.  Degrades to plain inline
+ * on toolchains without the attributes. */
+#if defined(_MSC_VER)
+#define LDZ_FORCEINLINE __forceinline
+#define LDZ_NOINLINE __declspec(noinline)
+#elif defined(__clang__) || defined(__GNUC__)
+#define LDZ_FORCEINLINE inline __attribute__((always_inline))
+#define LDZ_NOINLINE __attribute__((noinline))
+#else
+#define LDZ_FORCEINLINE inline
+#define LDZ_NOINLINE
+#endif
+
 #ifdef __cplusplus
 
 namespace lendiza::detail
