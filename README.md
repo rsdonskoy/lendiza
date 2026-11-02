@@ -134,6 +134,17 @@ how to re-record the behaviour baseline in `tests/data/`.
 test vectors on instruction length - external ground truth over
 fuzzer-derived and real-world byte streams; see `tests/diff/README.md`.
 
+MSVC 14.44 (VS 2022 17.44) currently fails to compile
+`tests/test_group_tables.cpp` (C2131 inside a constexpr nested range-for — a
+compiler bug, reproducible on unmodified trees). Build the suites with the
+bundled clang-cl until that is fixed:
+
+```bash
+cmake -S . -B build-clang -G "Visual Studio 17 2022" -T ClangCL
+cmake --build build-clang --config Release
+ctest --test-dir build-clang -C Release
+```
+
 ### Benchmark
 `bench/bench_lde.cpp` sweeps real `.text` twice — once per decoder — and reports
 elapsed time, throughput and successfully decoded instruction counts for the
@@ -187,3 +198,25 @@ calling it anywhere else:
   the x64 callee-saved contract and surfaces as a crash long after the call, in
   whichever caller happened to keep a value in that register. The stub saves and
   restores it.
+
+### Self-contained benchmark
+`bench/bench_decode.cpp` is a dependency-free alternative to `bench_lde.cpp`: it
+sweeps a corpus through the `lendiza_disasm_x86/x64` C ABI and reports MiB/s
+and Minstructions/s, without the lde64 archive or an external fixture
+directory. `bench/extract_text.py` pulls the `.text` section out of any local
+PE image to build a corpus:
+
+```bash
+python bench/extract_text.py C:/Windows/System32/ntdll.dll ntdll.text.bin
+
+cl /std:c++20 /O2 /DNDEBUG /I include bench/bench_decode.cpp src/lendiza.cpp
+bench_decode.exe ntdll.text.bin kernel32.text.bin   # timed sweep per corpus
+bench_decode.exe --arch x86 ntdll.text.bin          # IA-32 decode of the same bytes
+bench_decode.exe --dump out.bin ntdll.text.bin      # per-offset results, no timing
+```
+
+With no file arguments a deterministic 8 MiB synthetic corpus is generated in
+memory. `--dump` writes one result byte per offset — the decoded length 1–15,
+or `0xF0|error-code` — and byte-comparing dumps before and after a decoder
+change is the differential check used to validate the leaf fast-path
+optimization; see [.doc/x64-decode-optimization.md](.doc/x64-decode-optimization.md).

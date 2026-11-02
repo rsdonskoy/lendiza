@@ -1,5 +1,7 @@
 # Prerequisites
+.*/
 *.d
+Testing/
 
 # Compiled Object files
 *.slo
@@ -61,3 +63,8 @@ tests/diff/out/
 
 # zydis regression data carries a .out extension; keep it despite *.out above
 !third_party/zydis/*.out
+
+# bench: generated corpora and differential dumps
+bench/fixtures/
+bench/dump/
+bench/dump2/
