@@ -134,16 +134,10 @@ how to re-record the behaviour baseline in `tests/data/`.
 test vectors on instruction length - external ground truth over
 fuzzer-derived and real-world byte streams; see `tests/diff/README.md`.
 
-MSVC 14.44 (VS 2022 17.44) currently fails to compile
-`tests/test_group_tables.cpp` (C2131 inside a constexpr nested range-for — a
-compiler bug, reproducible on unmodified trees). Build the suites with the
-bundled clang-cl until that is fixed:
-
-```bash
-cmake -S . -B build-clang -G "Visual Studio 17 2022" -T ClangCL
-cmake --build build-clang --config Release
-ctest --test-dir build-clang -C Release
-```
+MSVC 14.44 (19.44) mis-evaluates the nested range-for over a 2-D array in
+`test_group_tables.cpp`'s constexpr check (C2131); the affected loops carry a
+version-gated index-based equivalent (`_MSC_VER >= 1944`), so the suites build
+with MSVC and clang-cl alike.
 
 ### Benchmark
 `bench/bench_lde.cpp` sweeps real `.text` twice — once per decoder — and reports

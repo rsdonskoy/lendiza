@@ -136,8 +136,25 @@ constexpr bool all_ok()
     for (const auto* t : x86_grp2) { if (!lzgt::table_ok(*t)) { return false; } }
     for (const auto* t : amd_grp1) { if (!lzgt::table_ok(*t)) { return false; } }
     for (const auto* t : amd_grp2) { if (!lzgt::table_ok(*t)) { return false; } }
+#if defined(_MSC_VER) && _MSC_VER >= 1944
+    /* MSVC 14.44 (19.44) mis-evaluates the nested range-for over a 2-D array
+     * in constexpr: C2131 "out of range index 256; allowed range is 0 <= index
+     * < 8" - the inner loop's extent is confused with the outer array's.
+     * Index the rows directly; the forms are semantically identical. */
+    constexpr size_t kX86Rows = sizeof(lendiza::detail::kIa32LengthTable_x87)
+                                / sizeof(lendiza::detail::kIa32LengthTable_x87[0]);
+    constexpr size_t kAmdRows = sizeof(lendiza::detail::kLengthTable_x87)
+                                / sizeof(lendiza::detail::kLengthTable_x87[0]);
+    for (size_t i = 0; i < kX86Rows; ++i) {
+        if (!lzgt::table_ok(lendiza::detail::kIa32LengthTable_x87[i])) { return false; }
+    }
+    for (size_t i = 0; i < kAmdRows; ++i) {
+        if (!lzgt::table_ok(lendiza::detail::kLengthTable_x87[i])) { return false; }
+    }
+#else
     for (const auto& row : lendiza::detail::kIa32LengthTable_x87) { if (!lzgt::table_ok(row)) { return false; } }
     for (const auto& row : lendiza::detail::kLengthTable_x87) { if (!lzgt::table_ok(row)) { return false; } }
+#endif
     return true;
 }
 
